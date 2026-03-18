@@ -6,7 +6,10 @@ from passlib.context import CryptContext
 from fastapi.middleware.cors import CORSMiddleware
 import random
 import smtplib
+import os
 from email.message import EmailMessage
+EMAIL=os.getenv("EMAIL")
+EMAIL_KEY=os.getenv("EMAIL_KEY")
 Base=declarative_base()
 VerificationCodes={}
 class User(Base):
@@ -81,13 +84,13 @@ def send_verification_code(data:EmailModel,db:Session=Depends(get_db)):
 	VerificationCodes[email]=GenerateVerificationCode()
 	msg=EmailMessage()
 	msg["Subject"]="Verification Code"
-	msg["From"]="Fire Fighter Drone<ffighterdrone@gmail.com>"
+	msg["From"]=f"Fire Fighter Drone<{EMAIL}>"
 	msg["To"]=email
 	msg.set_content(f"Your Verification Code is {VerificationCodes[email]}")
 	msg.add_alternative(f"Your Verification Code is <b>{VerificationCodes[email]}</b>",subtype="html")
 	try:
 		with smtplib.SMTP_SSL("smtp.gmail.com",465) as smtp:
-			smtp.login("ffighterdrone@gmail.com","xxtr omic rxtl clda")
+			smtp.login(EMAIL,EMAIL_KEY)
 			smtp.send_message(msg)
 	except:
 		return {"message":f"Cannot Send Verification Code to {email}","statusCode":-2}
