@@ -64,9 +64,9 @@ def verify_password(entered_password:str,stored_hashed_password:str)->bool:
 @app.post("/signup/")
 def signup(user:EmailModel,db:Session=Depends(get_db)):
 	db_user=db.query(User).filter(User.email==user.email).first()
-	if db_user:
+	if db_user and db_user.password!="":
 		return {"message":f"{user.email} Already Used","statusCode":-1}
-	return {"message":"Account Created Successfully","statusCode":0}
+	return {"message":"","statusCode":0}
 @app.post("/login/")
 def login(user:UserModel,db:Session=Depends(get_db)):
 	db_user=db.query(User).filter(User.email==user.email).first()
@@ -104,18 +104,13 @@ def set_verification_code(data:VerificationCodeModel):
 @app.post("/create_password/")
 def create_password(user:UserModel,db:Session=Depends(get_db)):
 	email=user.email
-	new_password=user.email
+	new_password=user.password
 	db_user=db.query(User).filter(User.email==email).first()
+	old_password=db_user.password
 	hashed_password=hash_string(new_password)
 	db_user.password=hashed_password
 	db.commit()
-	return {"message":f"Email {email} registered Successfully","statusCode":0}
-@app.post("/reset_password")
-def reset_password(user:UserModel,db:Session=Depends(get_db)):
-	email=user.email
-	new_password=user.email
-	db_user=db.query(User).filter(User.email==email).first()
-	hashed_password=hash_string(new_password)
-	db_user.password=hashed_password
-	db.commit()
-	return {"message":"Password Changed Successfully","statusCode":0}
+	if old_password!="":
+		return {"message":f"Password of {email} is Changed Successfully","statusCode":0}
+	else:
+		return {"message":f"Your email ({email}) has been successfully registered","statusCode":0}
