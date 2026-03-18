@@ -98,13 +98,20 @@ def set_verification_code(data:VerificationCodeModel):
 	if data.verification_code!=VerificationCodes[data.email]:
 		return{"message":"Error in Verification Code","statusCode":-1}
 	return{"message":"Successful Verification","statusCode":0}
-@app.post("/create_new_password/")
-def create_new_password(user:UserModel,db:Session=Depends(get_db)):
+@app.post("/create_password/")
+def create_password(user:UserModel,db:Session=Depends(get_db)):
 	email=user.email
 	new_password=user.email
 	db_user=db.query(User).filter(User.email==email).first()
-	if not db_user:
-		return {"message":"Email is not Exist","statusCode":-1}
+	hashed_password=hash_string(new_password)
+	db_user.password=hashed_password
+	db.commit()
+	return {"message":f"Email {email} registered Successfully","statusCode":0}
+@app.post("/reset_password")
+def reset_password(user:UserModel,db:Session=Depends(get_db)):
+	email=user.email
+	new_password=user.email
+	db_user=db.query(User).filter(User.email==email).first()
 	hashed_password=hash_string(new_password)
 	db_user.password=hashed_password
 	db.commit()
