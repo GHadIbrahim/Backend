@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine,Column,String
 from sqlalchemy.orm import declarative_base,sessionmaker,Session
-from fastapi import FastAPI,Depends
+from fastapi import FastAPI,Depends,WebSocket
 from pydantic import BaseModel
 from passlib.context import CryptContext
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,10 +8,19 @@ import random
 import smtplib
 import os
 from email.message import EmailMessage
+import socket
+import time
+import threading
+from threading import Lock
+import asyncio
 EMAIL=os.getenv("EMAIL")
 EMAIL_KEY=os.getenv("EMAIL_KEY")
 Base=declarative_base()
 VerificationCodes={}
+HEARTBEAT_PORT=5002
+TIMEOUT=4
+DevicesLock=threading.Lock()
+Devices={}
 class User(Base):
 	__tablename__="users"
 	email=Column(String,primary_key=True)
@@ -100,6 +109,7 @@ def set_verification_code(data:VerificationCodeModel):
 	global VerificationCodes
 	if data.verification_code!=VerificationCodes[data.email]:
 		return{"message":"Error in Verification Code","statusCode":-1}
+	del VerificationCodes[data.email]
 	return{"message":"Successful Verification","statusCode":0}
 @app.post("/create_password/")
 def create_password(user:UserModel,db:Session=Depends(get_db)):
@@ -114,3 +124,43 @@ def create_password(user:UserModel,db:Session=Depends(get_db)):
 		return {"message":f"Password of {email} is Changed Successfully","statusCode":0}
 	else:
 		return {"message":f"Your email ({email}) has been successfully registered","statusCode":0}
+@app.post("/connect_device/")
+def connect_device():
+	pass
+@app.websocket("/ws/devices")
+async def websocket_devices(websocket:WebSocket):
+	await websocket.accept()
+	try:
+		while True:
+			with DevicesLock:
+				await websocket.send_json(Devices)
+			await asyncio.sleep(1)
+	except:
+		pass
+def Heartbeat():
+	Socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+	Socket.bind(("",HEARTBEAT_PORT))
+	Socket.setblocking(False)
+	while True:
+		try:
+			Data,Address=Socket.recvfrom(1024)
+			MSG=Data.decode()
+			try:
+				MAC,HOSTNAME,IP=MSG.split(",")
+			except ValueError:
+				continue
+			CurrentTime=time.time()
+			with DevicesLock:
+				if MAC in Devices:
+					Devices[MAC]["LAST_HEARTBEAT"]=CurrentTime
+				else:
+					Devices[MAC]={"IP":IP,"LAST_HEARTBEAT":CurrentTime,"HOSTNAME":HOSTNAME}
+		except BlockingIOError:
+			pass
+		CurrentTime=time.time()
+		with DevicesLock:
+			for MAC in list(Devices.keys()):
+				if CurrentTime-Devices[MAC]["LAST_HEARTBEAT"]>TIMEOUT:
+					del Devices[MAC]
+		time.sleep(0.1)
+threading.Thread(target=Heartbeat,daemon=True).start()
