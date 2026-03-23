@@ -1,8 +1,8 @@
 from sqlalchemy import create_engine,Column,String
 from sqlalchemy.orm import declarative_base,sessionmaker,Session
-from fastapi import FastAPI,Depends,WebSocket
 from pydantic import BaseModel
 from passlib.context import CryptContext
+from fastapi import FastAPI,Depends,WebSocket,WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import random
 import smtplib
@@ -13,6 +13,9 @@ import asyncio
 import socket
 from zeroconf import Zeroconf, ServiceBrowser, ServiceListener
 import requests
+import cv2
+import numpy
+import json
 class DeviceListener(ServiceListener):
 	def __init__(self,devices_dict,lock):
 		self.devices=devices_dict
@@ -200,3 +203,17 @@ def disconnect_device(data:DeviceModel):
 			return {"message": f"{Device_NAME} Connection denied","statusCode":-2}
 	except Exception as e:
 		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
+@app.websocket("/ws/information/")
+async def websocket_endpoint(websocket: WebSocket):
+	await websocket.accept()
+	try:
+		while True:
+			image_bytes=await websocket.receive_bytes()
+			np_array=numpy.frombuffer(image_bytes,numpy.uint8)
+			frame=cv2.imdecode(np_array,cv2.IMREAD_COLOR)
+			if frame is not None:
+					cv2.imshow("Recieved Frame",frame)
+					cv2.waitKey(1)
+	except WebSocketDisconnect:
+			print("Client disconnected")
+			cv2.destroyAllWindows()
