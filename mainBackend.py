@@ -212,8 +212,8 @@ async def websocket_endpoint(websocket: WebSocket):
 			np_array=numpy.frombuffer(image_bytes,numpy.uint8)
 			frame=cv2.imdecode(np_array,cv2.IMREAD_COLOR)
 			if frame is not None:
-					cv2.imshow("Recieved Frame",frame)
-					cv2.waitKey(1)
+				cv2.imshow("Recieved Frame",frame)
+				cv2.waitKey(1)
 	except WebSocketDisconnect:
-			print("Client disconnected")
-			cv2.destroyAllWindows()
+		print("Client disconnected")
+		cv2.destroyAllWindows()
