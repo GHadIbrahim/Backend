@@ -12,6 +12,7 @@ from threading import Lock
 import asyncio
 import socket
 from zeroconf import Zeroconf, ServiceBrowser, ServiceListener
+import requests
 class DeviceListener(ServiceListener):
 	def __init__(self,devices_dict,lock):
 		self.devices=devices_dict
@@ -22,8 +23,9 @@ class DeviceListener(ServiceListener):
 			ip=socket.inet_ntoa(info.addresses[0])
 			hostname=info.server.rstrip(".")
 			mac=info.properties.get(b"MAC", b"").decode()
+			Port=info.port
 			with self.lock:
-				self.devices[mac]={"IP":ip,"HOSTNAME":hostname,"ServiceName":name}
+				self.devices[mac]={"IP":ip,"HOSTNAME":hostname,"ServiceName":name,"PORT":Port}
 	def remove_service(self,zeroconf,type,name):
 		with self.lock:
 			to_remove=[k for k,v in self.devices.items() if v["ServiceName"]==name]
@@ -162,5 +164,39 @@ def connect_device(data:DeviceModel):
 	Device_MAC=data.Device_MAC
 	with DevicesLock:
 		if not Device_MAC in list(Devices.keys()):
-			return {"message":f"Connect to {Device_NAME} Failed","statusCode":-1}
-	return {"message":f"{Device_NAME} has been Connected Successfully","statusCode":0}
+			return {"message":f"Connection to {Device_NAME} Failed","statusCode":-1}
+	with DevicesLock:
+		IP=Devices[Device_MAC]["IP"]
+		PORT=Devices[Device_MAC]["PORT"]
+	try:
+		response=requests.get(f"http://{IP}:{PORT}/connect",timeout=3)
+		if response.status_code==200:
+			if response.text=="Device Connected Successfully":
+				return {"message":response.text,"statusCode":0}
+			else:
+				return {"message":response.text,"statusCode":-1}
+		else:
+			return {"message": f"{Device_NAME} Connection denied","statusCode":-2}
+	except Exception as e:
+		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
+@app.post("/disconnect_device/")
+def disconnect_device(data:DeviceModel):
+	Device_NAME=data.Device_NAME
+	Device_MAC=data.Device_MAC
+	with DevicesLock:
+		if not Device_MAC in list(Devices.keys()):
+			return {"message":f"Connection to {Device_NAME} Failed","statusCode":-1}
+	with DevicesLock:
+		IP=Devices[Device_MAC]["IP"]
+		PORT=Devices[Device_MAC]["PORT"]
+	try:
+		response=requests.get(f"http://{IP}:{PORT}/disconnect",timeout=3)
+		if response.status_code==200:
+			if response.text=="Device disconnected Successfully":
+				return {"message":response.text,"statusCode":0}
+			else:
+				return {"message":response.text,"statusCode":-1}
+		else:
+			return {"message": f"{Device_NAME} Connection denied","statusCode":-2}
+	except Exception as e:
+		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
