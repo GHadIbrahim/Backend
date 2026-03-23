@@ -8,28 +8,50 @@ import random
 import smtplib
 import os
 from email.message import EmailMessage
-import socket
-import time
-import threading
 from threading import Lock
 import asyncio
+import socket
+from zeroconf import Zeroconf, ServiceBrowser, ServiceListener
+class DeviceListener(ServiceListener):
+	def __init__(self,devices_dict,lock):
+		self.devices=devices_dict
+		self.lock=lock
+	def add_service(self,zeroconf,type,name):
+		info=zeroconf.get_service_info(type,name)
+		if info:
+			ip=socket.inet_ntoa(info.addresses[0])
+			hostname=info.server.rstrip(".")
+			mac=info.properties.get(b"MAC", b"").decode()
+			with self.lock:
+				self.devices[mac]={"IP":ip,"HOSTNAME":hostname,"ServiceName":name}
+	def remove_service(self,zeroconf,type,name):
+		with self.lock:
+			to_remove=[k for k, v in self.devices.items() if v["ServiceName"]==name]
+			for k in to_remove:
+				del self.devices[k]
+	def update_service(self,zeroconf,type,name):
+		self.add_service(zeroconf,type,name)
 EMAIL=os.getenv("EMAIL")
 EMAIL_KEY=os.getenv("EMAIL_KEY")
 Base=declarative_base()
 VerificationCodes={}
-HEARTBEAT_PORT=5002
-TIMEOUT=4
-DevicesLock=threading.Lock()
+DevicesLock=Lock()
 Devices={}
+zeroconf=Zeroconf()
+listener=DeviceListener(Devices,DevicesLock)
+browser=ServiceBrowser(zeroconf,"_http._tcp.local.",listener)
 class User(Base):
 	__tablename__="users"
 	email=Column(String,primary_key=True)
 	password=Column(String)
 class VerificationCodeModel(BaseModel):
-		verification_code:str
-		email:str
+	verification_code:str
+	email:str
 class EmailModel(BaseModel):
-		email: str
+	email: str
+class DeviceModel(BaseModel):
+	Device_MAC:str
+	Device_NAME:str
 engine=create_engine("sqlite:///./Users.db",connect_args={"check_same_thread": False})
 SessionLocal=sessionmaker(autocommit=False,autoflush=False,bind=engine)
 Base.metadata.create_all(bind=engine)
@@ -124,9 +146,6 @@ def create_password(user:UserModel,db:Session=Depends(get_db)):
 		return {"message":f"Password of {email} is Changed Successfully","statusCode":0}
 	else:
 		return {"message":f"Your email ({email}) has been successfully registered","statusCode":0}
-@app.post("/connect_device/")
-def connect_device():
-	pass
 @app.websocket("/ws/devices")
 async def websocket_devices(websocket:WebSocket):
 	await websocket.accept()
@@ -137,30 +156,11 @@ async def websocket_devices(websocket:WebSocket):
 			await asyncio.sleep(1)
 	except:
 		pass
-def Heartbeat():
-	Socket=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-	Socket.bind(("",HEARTBEAT_PORT))
-	Socket.setblocking(False)
-	while True:
-		try:
-			Data,Address=Socket.recvfrom(1024)
-			MSG=Data.decode()
-			try:
-				MAC,HOSTNAME,IP=MSG.split(",")
-			except ValueError:
-				continue
-			CurrentTime=time.time()
-			with DevicesLock:
-				if MAC in Devices:
-					Devices[MAC]["LAST_HEARTBEAT"]=CurrentTime
-				else:
-					Devices[MAC]={"IP":IP,"LAST_HEARTBEAT":CurrentTime,"HOSTNAME":HOSTNAME}
-		except BlockingIOError:
-			pass
-		CurrentTime=time.time()
-		with DevicesLock:
-			for MAC in list(Devices.keys()):
-				if CurrentTime-Devices[MAC]["LAST_HEARTBEAT"]>TIMEOUT:
-					del Devices[MAC]
-		time.sleep(0.1)
-threading.Thread(target=Heartbeat,daemon=True).start()
+@app.post("/connect_device/")
+def connect_device(data:DeviceModel):
+	Device_NAME=data.Device_NAME
+	Device_MAC=data.Device_MAC
+	with DevicesLock:
+		if not Device_MAC in list(Devices.keys()):
+			return {"message":f"Connect to {Device_NAME} Failed","statusCode":-1}
+	return {"message":f"{Device_NAME} has been Connected Successfully","statusCode":0}
