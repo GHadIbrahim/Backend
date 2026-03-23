@@ -26,7 +26,7 @@ class DeviceListener(ServiceListener):
 				self.devices[mac]={"IP":ip,"HOSTNAME":hostname,"ServiceName":name}
 	def remove_service(self,zeroconf,type,name):
 		with self.lock:
-			to_remove=[k for k, v in self.devices.items() if v["ServiceName"]==name]
+			to_remove=[k for k,v in self.devices.items() if v["ServiceName"]==name]
 			for k in to_remove:
 				del self.devices[k]
 	def update_service(self,zeroconf,type,name):
