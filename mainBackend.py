@@ -16,6 +16,8 @@ import requests
 import cv2
 import numpy
 import json
+DeviceData={}
+Clients=[]
 class DeviceListener(ServiceListener):
 	def __init__(self,devices_dict,lock):
 		self.devices=devices_dict
@@ -152,7 +154,7 @@ def create_password(user:UserModel,db:Session=Depends(get_db)):
 	else:
 		return {"message":f"Your email ({email}) has been successfully registered","statusCode":0}
 @app.websocket("/ws/devices")
-async def websocket_devices(websocket:WebSocket):
+async def devices_websocket(websocket:WebSocket):
 	await websocket.accept()
 	try:
 		while True:
@@ -203,17 +205,43 @@ def disconnect_device(data:DeviceModel):
 			return {"message": f"{Device_NAME} Connection denied","statusCode":-2}
 	except Exception as e:
 		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
-@app.websocket("/ws/information/")
-async def websocket_endpoint(websocket: WebSocket):
+@app.websocket("/ws/receive_information/{device_mac}/")
+async def receive_information(websocket: WebSocket,device_mac:str):
 	await websocket.accept()
 	try:
 		while True:
-			image_bytes=await websocket.receive_bytes()
-			np_array=numpy.frombuffer(image_bytes,numpy.uint8)
-			frame=cv2.imdecode(np_array,cv2.IMREAD_COLOR)
-			if frame is not None:
-				cv2.imshow("Recieved Frame",frame)
-				cv2.waitKey(1)
+			data=await websocket.receive()
+			if "bytes" in data:
+				np_array=numpy.frombuffer(data["bytes"],numpy.uint8)
+				frame=cv2.imdecode(np_array,cv2.IMREAD_COLOR)
+				if frame is not None:
+					cv2.imshow("Recieved Frame",frame)
+					cv2.waitKey(1)
+				if device_mac not in DeviceData:
+					DeviceData[device_mac]={}
+				DeviceData[device_mac]["frame"]=data["bytes"]
+			elif "text" in data:
+				info=json.loads(data["text"])
+				if device_mac not in DeviceData:
+						DeviceData[device_mac] = {}
+				DeviceData[device_mac]["info"]=info
 	except WebSocketDisconnect:
 		print("Client disconnected")
 		cv2.destroyAllWindows()
+@app.websocket("/ws/send_information/")
+async def send_information(websocket: WebSocket):
+	await websocket.accept()
+	Clients.append(websocket)
+	try:
+		while True:
+			await asyncio.sleep(0.03)
+			for mac,data in DeviceData.items():
+				if "info" in data:
+					await websocket.send_json({
+							"mac":mac,
+							"info":data["info"]
+					})
+				if "frame" in data:
+					await websocket.send_bytes(data["frame"])
+	except:
+		Clients.remove(websocket)
