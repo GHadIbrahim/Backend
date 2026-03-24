@@ -11,7 +11,7 @@ from email.message import EmailMessage
 from threading import Lock
 import asyncio
 import socket
-from zeroconf import Zeroconf, ServiceBrowser, ServiceListener
+from zeroconf import Zeroconf,ServiceBrowser,ServiceListener
 import requests
 import cv2
 import numpy
@@ -29,8 +29,15 @@ class DeviceListener(ServiceListener):
 			hostname=info.server.rstrip(".")
 			mac=info.properties.get(b"MAC", b"").decode()
 			Port=info.port
+			LAT=int(info.properties.get(b"LAT",b"0").decode())
+			LON=int(info.properties.get(b"LON",b"0").decode())
 			with self.lock:
-				self.devices[mac]={"IP":ip,"HOSTNAME":hostname,"ServiceName":name,"PORT":Port}
+				self.devices[mac]={"IP":ip,
+											 "HOSTNAME":hostname,
+											 "ServiceName":name,
+											 "PORT":Port,
+											 "LAT":LAT,
+											 "LON":LON}
 	def remove_service(self,zeroconf,type,name):
 		with self.lock:
 			to_remove=[k for k,v in self.devices.items() if v["ServiceName"]==name]
@@ -59,6 +66,9 @@ class EmailModel(BaseModel):
 class DeviceModel(BaseModel):
 	Device_MAC:str
 	Device_NAME:str
+class ControlStatementModel(BaseModel):
+	Device_MAC:str
+	Statement:str
 engine=create_engine("sqlite:///./Users.db",connect_args={"check_same_thread": False})
 SessionLocal=sessionmaker(autocommit=False,autoflush=False,bind=engine)
 Base.metadata.create_all(bind=engine)
@@ -191,7 +201,6 @@ def disconnect_device(data:DeviceModel):
 	with DevicesLock:
 		if not Device_MAC in list(Devices.keys()):
 			return {"message":f"Connection to {Device_NAME} Failed","statusCode":-1}
-	with DevicesLock:
 		IP=Devices[Device_MAC]["IP"]
 		PORT=Devices[Device_MAC]["PORT"]
 	try:
@@ -245,3 +254,21 @@ async def send_information(websocket: WebSocket):
 					await websocket.send_bytes(data["frame"])
 	except:
 		Clients.remove(websocket)
+@app.post("/control_statement/")
+def control_statement(controlStatement:ControlStatementModel):
+	Device_MAC=controlStatement.Device_MAC
+	Statement=controlStatement.Statement
+	with DevicesLock:
+		if not Device_MAC in list(Devices.keys()):
+			return {"message":"cannot send Control Statement","statusCode":-1}
+		IP=Devices[Device_MAC]["IP"]
+		PORT=Devices[Device_MAC]["PORT"]
+		Device_NAME=Devices[Device_MAC]["HOSTNAME"]
+	try:
+		response=requests.get(f'http://{IP}:{PORT}/control/{Device_MAC}/',params={"ControlStatement":Statement},timeout=3)
+		if response.status_code==200:
+			return {"message":"","statusCode":0}
+		else:
+			return {"message":"cannot send Control Statement","statusCode":-2}
+	except Exception as e:
+		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
