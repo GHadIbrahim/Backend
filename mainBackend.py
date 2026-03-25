@@ -24,7 +24,6 @@ class DeviceListener(ServiceListener):
 		self.lock=lock
 	def add_service(self,zeroconf,type,name):
 		info=zeroconf.get_service_info(type,name)
-		print("service added")
 		if info:
 			ip=socket.inet_ntoa(info.addresses[0])
 			hostname=info.server.rstrip(".")
@@ -46,9 +45,7 @@ class DeviceListener(ServiceListener):
 			to_remove=[k for k,v in self.devices.items() if v["ServiceName"]==name]
 			for k in to_remove:
 				del self.devices[k]
-		print("service removed")
 	def update_service(self,zeroconf,type,name):
-		print("service updated")
 		self.add_service(zeroconf,type,name)
 EMAIL=os.getenv("EMAIL")
 EMAIL_KEY=os.getenv("EMAIL_KEY")
