@@ -27,7 +27,7 @@ class DeviceListener(ServiceListener):
 		if info:
 			ip=socket.inet_ntoa(info.addresses[0])
 			hostname=info.server.rstrip(".")
-			mac=info.properties.get(b"MAC", b"").decode()
+			mac=info.properties.get(b"MAC", b"").decode().upper()
 			Port=info.port
 			LAT=int(info.properties.get(b"LAT",b"0").decode())
 			LON=int(info.properties.get(b"LON",b"0").decode())
@@ -180,20 +180,21 @@ def connect_device(data:DeviceModel):
 	with DevicesLock:
 		if not Device_MAC in list(Devices.keys()):
 			return {"message":f"Connection to {Device_NAME} Failed","statusCode":-1}
-	with DevicesLock:
 		IP=Devices[Device_MAC]["IP"]
 		PORT=Devices[Device_MAC]["PORT"]
+		ENCODED_MAC=Device_MAC.replace(":","-")
 	try:
-		response=requests.get(f"http://{IP}:{PORT}/connect",timeout=3)
+		response=requests.get(f"http://{IP}:{PORT}/connect/{ENCODED_MAC}/",timeout=3)
+		print(response)
 		if response.status_code==200:
 			if response.text=="Device Connected Successfully":
 				return {"message":response.text,"statusCode":0}
 			else:
 				return {"message":response.text,"statusCode":-1}
 		else:
-			return {"message": f"{Device_NAME} Connection denied","statusCode":-2}
+			return {"message": f"Connection to {Device_NAME} denied","statusCode":-2}
 	except Exception as e:
-		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
+		return {"message": f"Connection to {Device_NAME} Failed {e}","statusCode":-3}
 @app.post("/disconnect_device/")
 def disconnect_device(data:DeviceModel):
 	Device_NAME=data.Device_NAME
@@ -203,8 +204,10 @@ def disconnect_device(data:DeviceModel):
 			return {"message":f"Connection to {Device_NAME} Failed","statusCode":-1}
 		IP=Devices[Device_MAC]["IP"]
 		PORT=Devices[Device_MAC]["PORT"]
+		ENCODED_MAC=Device_MAC.replace(":","-")
 	try:
-		response=requests.get(f"http://{IP}:{PORT}/disconnect",timeout=3)
+		response=requests.get(f"http://{IP}:{PORT}/disconnect/{ENCODED_MAC}/",timeout=3)
+		print(response)
 		if response.status_code==200:
 			if response.text=="Device disconnected Successfully":
 				return {"message":response.text,"statusCode":0}
@@ -264,8 +267,10 @@ def control_statement(controlStatement:ControlStatementModel):
 		IP=Devices[Device_MAC]["IP"]
 		PORT=Devices[Device_MAC]["PORT"]
 		Device_NAME=Devices[Device_MAC]["HOSTNAME"]
+		ENCODED_MAC=Device_MAC.replace(":","-")
 	try:
-		response=requests.get(f'http://{IP}:{PORT}/control/{Device_MAC}/',params={"ControlStatement":Statement},timeout=3)
+		response=requests.get(f'http://{IP}:{PORT}/control/{ENCODED_MAC}/',params={"ControlStatement":Statement},timeout=3)
+		print(response)
 		if response.status_code==200:
 			return {"message":"","statusCode":0}
 		else:
