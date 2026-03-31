@@ -16,6 +16,8 @@ import requests
 import cv2
 import numpy
 import json
+import secrets
+import string
 DeviceData={}
 Clients=[]
 class DeviceListener(ServiceListener):
@@ -82,19 +84,9 @@ app.add_middleware(
 	allow_methods=["*"],
 	allow_headers=["*"],)
 def GenerateVerificationCode()->str:
-	tempVerificationCode=""
-	for i in range(6):
-		Digit=random.randint(48,57)
-		CapitalLetter=random.randint(65,90)
-		SmallLetter=random.randint(97,122)
-		RealCharacter=random.randint(1,3)
-		if RealCharacter==1:
-			tempVerificationCode+=chr(Digit)
-		elif RealCharacter==2:
-			tempVerificationCode+=chr(CapitalLetter)
-		elif RealCharacter==3:
-			tempVerificationCode+=chr(SmallLetter)
-	return tempVerificationCode
+	characters=string.ascii_letters+string.digits
+	verification_code=''.join(secrets.choice(characters) for _ in range(6))
+	return verification_code
 pwd_context=CryptContext(schemes=["bcrypt"],deprecated="auto")
 class UserModel(BaseModel):
 	email: str
