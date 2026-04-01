@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from passlib.context import CryptContext
 from fastapi import FastAPI,Depends,WebSocket,WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import random
 import smtplib
 import os
 from email.message import EmailMessage
@@ -33,7 +32,7 @@ class DeviceListener(ServiceListener):
 			Port=info.port
 			LAT=float(info.properties.get(b"LAT",b"0").decode())
 			LON=float(info.properties.get(b"LON",b"0").decode())
-			isDeviceConnected=bool(info.properties.get(b"isDeviceConnected",b"0").decode())
+			isDeviceConnected=(info.properties.get(b"isDeviceConnected",b"0").decode()=="True")
 			with self.lock:
 				self.devices[mac]={"IP":ip,
 											 "HOSTNAME":hostname,
@@ -179,7 +178,6 @@ def connect_device(data:DeviceModel):
 		ENCODED_MAC=Device_MAC.replace(":","-")
 	try:
 		response=requests.get(f"http://{IP}:{PORT}/connect/{ENCODED_MAC}/",timeout=3)
-		print(response)
 		if response.status_code==200:
 			if response.text=="Device Connected Successfully":
 				return {"message":response.text,"statusCode":0}
@@ -256,7 +254,8 @@ def control_statement(controlStatement:ControlStatementModel):
 	Device_MAC=controlStatement.Device_MAC
 	Statement=controlStatement.Statement
 	with DevicesLock:
-		if not Device_MAC in list(Devices.keys()):
+		if not Device_MAC in Devices:
+			print(Device_MAC)
 			return {"message":"cannot send Control Statement","statusCode":-1}
 		IP=Devices[Device_MAC]["IP"]
 		PORT=Devices[Device_MAC]["PORT"]
@@ -264,10 +263,13 @@ def control_statement(controlStatement:ControlStatementModel):
 		ENCODED_MAC=Device_MAC.replace(":","-")
 	try:
 		response=requests.get(f'http://{IP}:{PORT}/control/{ENCODED_MAC}/',params={"ControlStatement":Statement},timeout=3)
-		print(response)
 		if response.status_code==200:
 			return {"message":"","statusCode":0}
 		else:
 			return {"message":"cannot send Control Statement","statusCode":-2}
 	except Exception as e:
 		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
+
+import uvicorn
+if __name__=="__main__":
+	uvicorn.run(app,host="0.0.0.0",port=8000)
