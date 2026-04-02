@@ -10,15 +10,15 @@ from email.message import EmailMessage
 from threading import Lock
 import asyncio
 import socket
-from zeroconf import Zeroconf,ServiceBrowser,ServiceListener
+from zeroconf import Zeroconf,ServiceBrowser,ServiceListener,ServiceInfo
 import requests
-import cv2
-import numpy
 import json
 import secrets
 import string
 DeviceData={}
 Clients=[]
+oldBackendIP=""
+currentBackendIP=""
 class DeviceListener(ServiceListener):
 	def __init__(self,devices_dict,lock):
 		self.devices=devices_dict
@@ -55,6 +55,33 @@ VerificationCodes={}
 DevicesLock=Lock()
 Devices={}
 zeroconf=Zeroconf()
+async def register_backend():
+	while True:
+		currentBackendIP=socket.gethostbyname(socket.gethostname())
+		if currentBackendIP!=oldBackendIP and oldBackendIP!="":
+			oldInfo=ServiceInfo(
+				"_flutter._tcp.local.",
+				"fastapi-backend._flutter._tcp.local.",
+				addresses=[socket.inet_aton(oldBackendIP)],
+				port=8000,
+				properties={
+						b"sender":b"backend",
+				},
+			)
+			newInfo=ServiceInfo(
+				"_flutter._tcp.local.",
+				"fastapi-backend._flutter._tcp.local.",
+				addresses=[socket.inet_aton(currentBackendIP)],
+				port=8000,
+				properties={
+						b"sender":b"backend",
+				},
+			)
+			await zeroconf.async_unregister_service(oldInfo)
+			await zeroconf.async_register_service(newInfo)
+			await asyncio.sleep(2)
+		oldBackendIP=currentBackendIP
+asyncio.create_task(register_backend())
 listener=DeviceListener(Devices,DevicesLock)
 browser=ServiceBrowser(zeroconf,"_http._tcp.local.",listener)
 class User(Base):
@@ -216,22 +243,16 @@ async def receive_information(websocket: WebSocket,device_mac:str):
 		while True:
 			data=await websocket.receive()
 			if "bytes" in data:
-				np_array=numpy.frombuffer(data["bytes"],numpy.uint8)
-				frame=cv2.imdecode(np_array,cv2.IMREAD_COLOR)
-				if frame is not None:
-					cv2.imshow("Recieved Frame",frame)
-					cv2.waitKey(1)
 				if device_mac not in DeviceData:
 					DeviceData[device_mac]={}
 				DeviceData[device_mac]["frame"]=data["bytes"]
 			elif "text" in data:
 				info=json.loads(data["text"])
 				if device_mac not in DeviceData:
-						DeviceData[device_mac] = {}
+						DeviceData[device_mac]={}
 				DeviceData[device_mac]["info"]=info
 	except WebSocketDisconnect:
 		print("Client disconnected")
-		cv2.destroyAllWindows()
 @app.websocket("/ws/send_information/")
 async def send_information(websocket: WebSocket):
 	await websocket.accept()
@@ -269,7 +290,3 @@ def control_statement(controlStatement:ControlStatementModel):
 			return {"message":"cannot send Control Statement","statusCode":-2}
 	except Exception as e:
 		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
-
-import uvicorn
-if __name__=="__main__":
-	uvicorn.run(app,host="0.0.0.0",port=8000)
