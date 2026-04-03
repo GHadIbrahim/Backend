@@ -63,8 +63,9 @@ currentInfo=None
 Start_Send_IP_Event=asyncio.Event()
 Stop_Send_IP_Event=asyncio.Event()
 async def register_backend():
+	global currentBackendIP,ipZeroconf,currentInfo,Stop_Send_IP_Event
+	global Start_Send_IP_Event
 	await Start_Send_IP_Event.wait()
-	global currentBackendIP,ipZeroconf,currentInfo
 	isFirstTime=True
 	while not Stop_Send_IP_Event.is_set():
 		currentBackendIP=socket.gethostbyname(socket.gethostname())
@@ -86,30 +87,16 @@ async def register_backend():
 			pass
 		await asyncio.sleep(1)
 def start_send_ip_task():
-	global Send_IP_Task,Send_IP_Loop
+	global Send_IP_Task,Send_IP_Loop,Stop_Send_IP_Event,Start_Send_IP_Event
 	if Send_IP_Task is None:
 		Stop_Send_IP_Event.clear()
 		Start_Send_IP_Event.set()
 		Send_IP_Loop=asyncio.new_event_loop()
 		def run_loop(loop):
 			asyncio.set_event_loop(loop)
-			loop.create_task(register_backend())
-			loop.run_forever()
-			if currentInfo:
-				ipZeroconf.unregister_service(currentInfo)
-			ipZeroconf.close()
-			print("Send_IP loop stopped and Zeroconf closed.")
+			loop.run_until_complete(register_backend())
 		Send_IP_Task=Thread(target=run_loop,args=(Send_IP_Loop,),daemon=True)
 		Send_IP_Task.start()
-def stop_send_ip_task():
-	global Send_IP_Task,Send_IP_Loop
-	Stop_Send_IP_Event.set()
-	if Send_IP_Loop:
-		Send_IP_Loop.call_soon_threadsafe(Send_IP_Loop.stop)
-	if Send_IP_Task:
-		Send_IP_Task.join(timeout=1)
-		Send_IP_Task=None
-		Send_IP_Loop=None
 listener=DeviceListener(Devices,DevicesLock)
 browser=ServiceBrowser(devicesZeroconf,"_drone._tcp.local.",listener)
 class User(Base):
@@ -133,16 +120,12 @@ Base.metadata.create_all(bind=engine)
 @asynccontextmanager
 async def lifespan(app:FastAPI):
 	start_send_ip_task()
-	print("Backend startup complete.")
 	try:
 		yield
 	finally:
-		global currentInfo
-		stop_send_ip_task()
-		ipZeroconf.unregister_service(currentInfo)
-		devicesZeroconf.close()
-		ipZeroconf.close()
-		print("Backend shutdown complete.")
+		global Stop_Send_IP_Event
+		Stop_Send_IP_Event.set()
+		await ipZeroconf.async_unregister_service(currentInfo)
 app=FastAPI(lifespan=lifespan)
 app.add_middleware(
 	CORSMiddleware,
