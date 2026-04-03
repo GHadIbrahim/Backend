@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import smtplib
 import os
 from email.message import EmailMessage
-from threading import Lock
+from threading import Lock,Thread
 import asyncio
 import socket
 from zeroconf import Zeroconf,ServiceBrowser,ServiceListener,ServiceInfo
@@ -15,10 +15,10 @@ import requests
 import json
 import secrets
 import string
+import uvicorn
+from contextlib import asynccontextmanager
 DeviceData={}
 Clients=[]
-oldBackendIP=""
-currentBackendIP=""
 class DeviceListener(ServiceListener):
 	def __init__(self,devices_dict,lock):
 		self.devices=devices_dict
@@ -54,36 +54,64 @@ Base=declarative_base()
 VerificationCodes={}
 DevicesLock=Lock()
 Devices={}
-zeroconf=Zeroconf()
+devicesZeroconf=Zeroconf()
+ipZeroconf=Zeroconf()
+currentBackendIP=""
+Send_IP_Task=None
+Send_IP_Loop=None
+currentInfo=None
+Start_Send_IP_Event=asyncio.Event()
+Stop_Send_IP_Event=asyncio.Event()
 async def register_backend():
-	while True:
+	await Start_Send_IP_Event.wait()
+	global currentBackendIP,ipZeroconf,currentInfo
+	isFirstTime=True
+	while not Stop_Send_IP_Event.is_set():
 		currentBackendIP=socket.gethostbyname(socket.gethostname())
-		if currentBackendIP!=oldBackendIP and oldBackendIP!="":
-			oldInfo=ServiceInfo(
-				"_flutter._tcp.local.",
-				"fastapi-backend._flutter._tcp.local.",
-				addresses=[socket.inet_aton(oldBackendIP)],
-				port=8000,
-				properties={
-						b"sender":b"backend",
-				},
-			)
-			newInfo=ServiceInfo(
-				"_flutter._tcp.local.",
-				"fastapi-backend._flutter._tcp.local.",
-				addresses=[socket.inet_aton(currentBackendIP)],
-				port=8000,
-				properties={
-						b"sender":b"backend",
-				},
-			)
-			await zeroconf.async_unregister_service(oldInfo)
-			await zeroconf.async_register_service(newInfo)
-			await asyncio.sleep(2)
-		oldBackendIP=currentBackendIP
-asyncio.create_task(register_backend())
+		currentInfo=ServiceInfo(
+			"_backend._tcp.local.",
+			"fastapi-backend._backend._tcp.local.",
+			addresses=[socket.inet_aton(currentBackendIP)],
+			port=8000,
+			properties={b"sender":b"backend"},
+			server="backend.local."
+		)
+		try:
+			if isFirstTime:
+				ipZeroconf.register_service(currentInfo)
+				isFirstTime=False
+			else:
+				ipZeroconf.update_service(currentInfo)
+		except Exception:
+			pass
+		await asyncio.sleep(1)
+def start_send_ip_task():
+	global Send_IP_Task,Send_IP_Loop
+	if Send_IP_Task is None:
+		Stop_Send_IP_Event.clear()
+		Start_Send_IP_Event.set()
+		Send_IP_Loop=asyncio.new_event_loop()
+		def run_loop(loop):
+			asyncio.set_event_loop(loop)
+			loop.create_task(register_backend())
+			loop.run_forever()
+			if currentInfo:
+				ipZeroconf.unregister_service(currentInfo)
+			ipZeroconf.close()
+			print("Send_IP loop stopped and Zeroconf closed.")
+		Send_IP_Task=Thread(target=run_loop,args=(Send_IP_Loop,),daemon=True)
+		Send_IP_Task.start()
+def stop_send_ip_task():
+	global Send_IP_Task,Send_IP_Loop
+	Stop_Send_IP_Event.set()
+	if Send_IP_Loop:
+		Send_IP_Loop.call_soon_threadsafe(Send_IP_Loop.stop)
+	if Send_IP_Task:
+		Send_IP_Task.join(timeout=1)
+		Send_IP_Task=None
+		Send_IP_Loop=None
 listener=DeviceListener(Devices,DevicesLock)
-browser=ServiceBrowser(zeroconf,"_http._tcp.local.",listener)
+browser=ServiceBrowser(devicesZeroconf,"_drone._tcp.local.",listener)
 class User(Base):
 	__tablename__="users"
 	email=Column(String,primary_key=True)
@@ -102,7 +130,20 @@ class ControlStatementModel(BaseModel):
 engine=create_engine("sqlite:///./Users.db",connect_args={"check_same_thread": False})
 SessionLocal=sessionmaker(autocommit=False,autoflush=False,bind=engine)
 Base.metadata.create_all(bind=engine)
-app=FastAPI()
+@asynccontextmanager
+async def lifespan(app:FastAPI):
+	start_send_ip_task()
+	print("Backend startup complete.")
+	try:
+		yield
+	finally:
+		global currentInfo
+		stop_send_ip_task()
+		ipZeroconf.unregister_service(currentInfo)
+		devicesZeroconf.close()
+		ipZeroconf.close()
+		print("Backend shutdown complete.")
+app=FastAPI(lifespan=lifespan)
 app.add_middleware(
 	CORSMiddleware,
 	allow_origins=["*"],
@@ -226,7 +267,6 @@ def disconnect_device(data:DeviceModel):
 		ENCODED_MAC=Device_MAC.replace(":","-")
 	try:
 		response=requests.get(f"http://{IP}:{PORT}/disconnect/{ENCODED_MAC}/",timeout=3)
-		print(response)
 		if response.status_code==200:
 			if response.text=="Device disconnected Successfully":
 				return {"message":response.text,"statusCode":0}
@@ -276,7 +316,6 @@ def control_statement(controlStatement:ControlStatementModel):
 	Statement=controlStatement.Statement
 	with DevicesLock:
 		if not Device_MAC in Devices:
-			print(Device_MAC)
 			return {"message":"cannot send Control Statement","statusCode":-1}
 		IP=Devices[Device_MAC]["IP"]
 		PORT=Devices[Device_MAC]["PORT"]
@@ -290,3 +329,5 @@ def control_statement(controlStatement:ControlStatementModel):
 			return {"message":"cannot send Control Statement","statusCode":-2}
 	except Exception as e:
 		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
+if __name__=="__main__":
+	uvicorn.run("mainBackend:app",host="0.0.0.0",port=8000,reload=False)
