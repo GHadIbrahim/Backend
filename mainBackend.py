@@ -23,7 +23,7 @@ class DeviceListener(ServiceListener):
 	def __init__(self,devices_dict,lock):
 		self.devices=devices_dict
 		self.lock=lock
-	def add_service(self,zeroconf,type,name):
+	def add_service(self,zeroconf:Zeroconf,type,name):
 		info=zeroconf.get_service_info(type,name)
 		if info:
 			ip=socket.inet_ntoa(info.addresses[0])
@@ -207,7 +207,7 @@ def create_password(user:UserModel,db:Session=Depends(get_db)):
 		return {"message":f"Password of {email} is Changed Successfully","statusCode":0}
 	else:
 		return {"message":f"Your email ({email}) has been successfully registered","statusCode":0}
-@app.websocket("/ws/devices")
+@app.websocket("/ws/devices/")
 async def devices_websocket(websocket:WebSocket):
 	await websocket.accept()
 	try:
@@ -215,8 +215,8 @@ async def devices_websocket(websocket:WebSocket):
 			with DevicesLock:
 				await websocket.send_json(Devices)
 			await asyncio.sleep(1)
-	except:
-		pass
+	except Exception as e:
+		print(e)
 @app.post("/connect_device/")
 def connect_device(data:DeviceModel):
 	Device_NAME=data.Device_NAME
@@ -249,33 +249,41 @@ def disconnect_device(data:DeviceModel):
 		PORT=Devices[Device_MAC]["PORT"]
 		ENCODED_MAC=Device_MAC.replace(":","-")
 	try:
-		response=requests.get(f"http://{IP}:{PORT}/disconnect/{ENCODED_MAC}/",timeout=3)
+		response=requests.get(f"http://{IP}:{PORT}/disconnect/{ENCODED_MAC}/",timeout=6)
 		if response.status_code==200:
 			if response.text=="Device disconnected Successfully":
 				return {"message":response.text,"statusCode":0}
 			else:
 				return {"message":response.text,"statusCode":-1}
 		else:
-			return {"message": f"{Device_NAME} Connection denied","statusCode":-2}
-	except Exception as e:
-		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
+			return {"message":f"{Device_NAME} Connection denied","statusCode":-2}
+	except Exception:
+		return {"message":f"Connection to {Device_NAME} Failed","statusCode":-3}
 @app.websocket("/ws/receive_information/{device_mac}/")
 async def receive_information(websocket: WebSocket,device_mac:str):
 	await websocket.accept()
 	try:
 		while True:
-			data=await websocket.receive()
-			if "bytes" in data:
-				if device_mac not in DeviceData:
-					DeviceData[device_mac]={}
-				DeviceData[device_mac]["frame"]=data["bytes"]
-			elif "text" in data:
-				info=json.loads(data["text"])
-				if device_mac not in DeviceData:
+			try:
+				data=await websocket.receive()
+				if "bytes" in data:
+					if device_mac not in DeviceData:
 						DeviceData[device_mac]={}
-				DeviceData[device_mac]["info"]=info
-	except WebSocketDisconnect:
-		print("Client disconnected")
+					DeviceData[device_mac]["frame"]=data["bytes"]
+				elif "text" in data:
+					info=json.loads(data["text"])
+					if device_mac not in DeviceData:
+							DeviceData[device_mac]={}
+					DeviceData[device_mac]["info"]=info
+			except WebSocketDisconnect:
+				print("Client disconnected")
+				break
+			except RuntimeError:
+				print("Client disconnected")
+				break
+	finally:
+		if device_mac in DeviceData:
+			del DeviceData[device_mac]
 @app.websocket("/ws/send_information/")
 async def send_information(websocket: WebSocket):
 	await websocket.accept()
@@ -285,12 +293,22 @@ async def send_information(websocket: WebSocket):
 			await asyncio.sleep(0.03)
 			for mac,data in DeviceData.items():
 				if "info" in data:
-					await websocket.send_json({
+					try:
+						await websocket.send_json({
 							"mac":mac,
 							"info":data["info"]
-					})
+						})
+					except Exception as e:
+						#Clients.remove(websocket)
+						print(e)
+						#DeviceData.pop(mac)
 				if "frame" in data:
-					await websocket.send_bytes(data["frame"])
+					try:
+						await websocket.send_bytes(data["frame"])
+					except Exception as e:
+						Clients.remove(websocket)
+						print(e)
+						#DeviceData.pop(mac)
 	except:
 		Clients.remove(websocket)
 @app.post("/control_statement/")
@@ -310,7 +328,7 @@ def control_statement(controlStatement:ControlStatementModel):
 			return {"message":"","statusCode":0}
 		else:
 			return {"message":"cannot send Control Statement","statusCode":-2}
-	except Exception as e:
+	except Exception:
 		return {"message": f"Connection to {Device_NAME} Failed","statusCode":-3}
 if __name__=="__main__":
 	uvicorn.run("mainBackend:app",host="0.0.0.0",port=8000,reload=False)
