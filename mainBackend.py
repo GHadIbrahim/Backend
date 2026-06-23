@@ -306,11 +306,14 @@ async def send_information(websocket: WebSocket):
 					try:
 						await websocket.send_bytes(data["frame"])
 					except Exception as e:
-						Clients.remove(websocket)
+						#Clients.remove(websocket)
 						print(e)
 						#DeviceData.pop(mac)
 	except:
-		Clients.remove(websocket)
+		try:
+			Clients.remove(websocket)
+		except:
+			pass
 @app.post("/control_statement/")
 def control_statement(controlStatement:ControlStatementModel):
 	Device_MAC=controlStatement.Device_MAC
