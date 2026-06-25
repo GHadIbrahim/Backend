@@ -298,16 +298,14 @@ async def send_information(websocket: WebSocket):
 							"mac":mac,
 							"info":data["info"]
 						})
-					except Exception as e:
+					except Exception:
 						#Clients.remove(websocket)
-						print(e)
 						#DeviceData.pop(mac)
 				if "frame" in data:
 					try:
 						await websocket.send_bytes(data["frame"])
-					except Exception as e:
+					except Exception:
 						#Clients.remove(websocket)
-						print(e)
 						#DeviceData.pop(mac)
 	except:
 		try:
