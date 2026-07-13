@@ -125,7 +125,20 @@ async def lifespan(app:FastAPI):
 	finally:
 		global Stop_Send_IP_Event
 		Stop_Send_IP_Event.set()
-		await ipZeroconf.async_unregister_service(currentInfo)
+		if currentInfo:
+			try:
+				await ipZeroconf.async_unregister_service(currentInfo)
+			except Exception:
+				pass
+		try:
+			browser.cancel()
+		except Exception:
+			pass
+		try:
+			ipZeroconf.close()
+			devicesZeroconf.close()
+		except Exception:
+			pass
 app=FastAPI(lifespan=lifespan)
 app.add_middleware(
 	CORSMiddleware,
