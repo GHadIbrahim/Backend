@@ -183,9 +183,6 @@ def login(user:UserModel,db:Session=Depends(get_db)):
 @app.post("/send_verification_code/")
 def send_verification_code(data:EmailModel,db:Session=Depends(get_db)):
 	email=data.email
-	db_user=db.query(User).filter(User.email==email).first()
-	if not db_user:
-		return {"message":f"Email {email} is not Exist","statusCode":-1}
 	VerificationCodes[email]=GenerateVerificationCode()
 	msg=EmailMessage()
 	msg["Subject"]="Verification Code"
@@ -212,13 +209,15 @@ def create_password(user:UserModel,db:Session=Depends(get_db)):
 	email=user.email
 	new_password=user.password
 	db_user=db.query(User).filter(User.email==email).first()
-	old_password=db_user.password
 	hashed_password=hash_string(new_password)
-	db_user.password=hashed_password
-	db.commit()
-	if old_password!="":
+	if db_user:
+		db_user.password=hashed_password
+		db.commit()
 		return {"message":f"Password of {email} is Changed Successfully","statusCode":0}
 	else:
+		db_user=User(email=email,password=hashed_password)
+		db.add(db_user)
+		db.commit()
 		return {"message":f"Your email ({email}) has been successfully registered","statusCode":0}
 @app.websocket("/ws/devices/")
 async def devices_websocket(websocket:WebSocket):
