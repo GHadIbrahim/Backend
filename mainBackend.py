@@ -62,6 +62,8 @@ Send_IP_Loop=None
 currentInfo=None
 Start_Send_IP_Event=asyncio.Event()
 Stop_Send_IP_Event=asyncio.Event()
+DeviceSockets={}
+RaspberrySockets={}
 async def register_backend():
 	global currentBackendIP,ipZeroconf,currentInfo,Stop_Send_IP_Event
 	global Start_Send_IP_Event
@@ -123,22 +125,22 @@ async def lifespan(app:FastAPI):
 	try:
 		yield
 	finally:
-		global Stop_Send_IP_Event
+		global Stop_Send_IP_Event,currentInfo,browser,ipZeroconf,devicesZeroconf
 		Stop_Send_IP_Event.set()
 		if currentInfo:
 			try:
 				await ipZeroconf.async_unregister_service(currentInfo)
-			except Exception:
-				pass
+				ipZeroconf.close()
+			except Exception as e:
+				print(e)
 		try:
 			browser.cancel()
-		except Exception:
-			pass
+		except Exception as e:
+			print(e)
 		try:
-			ipZeroconf.close()
 			devicesZeroconf.close()
-		except Exception:
-			pass
+		except Exception as e:
+			print(e)
 app=FastAPI(lifespan=lifespan)
 app.add_middleware(
 	CORSMiddleware,
@@ -186,7 +188,7 @@ def send_verification_code(data:EmailModel,db:Session=Depends(get_db)):
 	VerificationCodes[email]=GenerateVerificationCode()
 	msg=EmailMessage()
 	msg["Subject"]="Verification Code"
-	msg["From"]=f"Fire Fighter Drone<{EMAIL}>"
+	msg["From"]=f"Fire Fighter Drone"
 	msg["To"]=email
 	msg.set_content(f"Your Verification Code is {VerificationCodes[email]}")
 	msg.add_alternative(f"Your Verification Code is <b>{VerificationCodes[email]}</b>",subtype="html")
@@ -272,60 +274,69 @@ def disconnect_device(data:DeviceModel):
 	except Exception:
 		return {"message":f"Connection to {Device_NAME} Failed","statusCode":-3}
 @app.websocket("/ws/receive_information/{device_mac}/")
-async def receive_information(websocket: WebSocket,device_mac:str):
+async def receive_information(websocket: WebSocket, device_mac: str):
 	await websocket.accept()
+	RaspberrySockets[device_mac]=websocket
 	try:
 		while True:
-			try:
-				data=await websocket.receive()
-				if "bytes" in data:
-					if device_mac not in DeviceData:
-						DeviceData[device_mac]={}
-					DeviceData[device_mac]["frame"]=data["bytes"]
-				elif "text" in data:
-					info=json.loads(data["text"])
-					if device_mac not in DeviceData:
-							DeviceData[device_mac]={}
-					DeviceData[device_mac]["info"]=info
-			except WebSocketDisconnect:
-				print("Client disconnected")
-				break
-			except RuntimeError:
-				print("Client disconnected")
-				break
+			data=await websocket.receive()
+			if "bytes" in data:
+				if device_mac not in DeviceData:
+					DeviceData[device_mac]={}
+				DeviceData[device_mac]["frame"] = data["bytes"]
+			elif "text" in data:
+				info=json.loads(data["text"])
+				if device_mac not in DeviceData:
+					DeviceData[device_mac]={}
+				DeviceData[device_mac]["info"]=info
+	except WebSocketDisconnect:
+			print("Raspberry Disconnected")
+	except RuntimeError:
+			print("Raspberry Disconnected")
 	finally:
+		if device_mac in RaspberrySockets:
+			del RaspberrySockets[device_mac]
 		if device_mac in DeviceData:
 			del DeviceData[device_mac]
-@app.websocket("/ws/send_information/")
-async def send_information(websocket: WebSocket):
-	await websocket.accept()
-	Clients.append(websocket)
-	try:
-		while True:
-			await asyncio.sleep(0.03)
-			for mac,data in DeviceData.items():
-				if "info" in data:
-					try:
-						await websocket.send_json({
-							"mac":mac,
-							"info":data["info"]
-						})
-					except Exception:
-						pass
-						#Clients.remove(websocket)
-						#DeviceData.pop(mac)
-				if "frame" in data:
-					try:
-						await websocket.send_bytes(data["frame"])
-					except Exception:
-						pass
-						#Clients.remove(websocket)
-						#DeviceData.pop(mac)
-	except:
+async def receive_from_flutter(websocket,device_mac:str):
+	global RaspberrySockets
+	while True:
 		try:
-			Clients.remove(websocket)
-		except:
-			pass
+			message=await websocket.receive_text()
+			data=json.loads(message)
+			if data.get("type")=="Coordinates":
+				RaspberrySocket=RaspberrySockets.get(device_mac)
+				if RaspberrySocket:
+					await RaspberrySocket.send_text(json.dumps(data))
+		except WebSocketDisconnect:
+			print("Flutter Disconnect")
+			break
+async def send_to_flutter(websocket):
+	global DeviceSockets
+	while True:
+		await asyncio.sleep(0.03)
+		for mac, data in DeviceData.items():
+			if "info" in data:
+				await websocket.send_json({
+						"mac": mac,
+						"info": data["info"]
+				})
+			if "frame" in data:
+				await websocket.send_bytes(data["frame"])
+@app.websocket("/ws/send_information/{device_mac}")
+async def send_information(websocket: WebSocket,device_mac:str):
+	await websocket.accept()
+	global DeviceSockets
+	DeviceSockets[device_mac]=websocket
+	try:
+		await asyncio.gather(
+			receive_from_flutter(websocket,device_mac),
+			send_to_flutter(websocket)
+		)
+	except WebSocketDisconnect:
+		pass
+	except Exception:
+		pass
 @app.post("/control_statement/")
 def control_statement(controlStatement:ControlStatementModel):
 	Device_MAC=controlStatement.Device_MAC
